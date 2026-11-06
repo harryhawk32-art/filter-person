@@ -1,15 +1,16 @@
 @echo off
-chcp 932 > nul
-echo ========================================
-echo   【画像整理】顔が写っていない画像を削除するツール 
-echo ========================================
+chcp 65001 > nul
+title 顔人数フィルター
 
-python "%~dp0fp.py"
+if exist "%~dp0.venv\Scripts\python.exe" (
+    set "PYTHON=%~dp0.venv\Scripts\python.exe"
+) else (
+    set "PYTHON=python"
+)
 
-if %ERRORLEVEL% EQU 1 (
-    echo.
-    cls
-) else goto :end_of_script
-
-:end_of_script
-echo "処理終了しました。" > nul
+"%PYTHON%" "%~dp0fp.py" %*
+set "RESULT=%ERRORLEVEL%"
+echo.
+if not "%RESULT%"=="0" echo エラーが発生しました。上のメッセージを確認してください。
+pause
+exit /b %RESULT%

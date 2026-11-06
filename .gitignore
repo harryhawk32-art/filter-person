@@ -1,2 +1,6 @@
-# python cache
+# Python environment and model caches
 __pycache__/
+.venv/
+.pip-cache/
+.torch/
+.ultralytics/
