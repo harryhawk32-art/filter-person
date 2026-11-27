@@ -18,6 +18,8 @@ Each image is evaluated using two bundled detection models:
 1. **Face detection**: YuNet via OpenCV `FaceDetectorYN` (`face_detection_yunet_2026may.onnx`, default confidence `0.8`).
 2. **Person detection**: Ultralytics YOLOv8n (`yolov8n.pt`, COCO `person` class, confidence `0.25` on CPU).
 
+Person detection runs only when exactly one face is found (faster).
+
 An image is **kept** only if all of the following rules hold:
 
 - **Exactly 1 face** is detected.
@@ -58,7 +60,7 @@ Because `ultralytics` installs PyTorch, the initial setup requires time and disk
 ### Command line
 
 ```bat
-python fp.py <folder> [--recursive] [--confidence 0.8] [--min-person-height 0.35]
+python fp.py <folder> [--recursive] [--confidence 0.8] [--min-person-height 0.35] [--dry-run] [--move-to DIR] [--device cpu]
 ```
 
 | Option | Default | Description |
@@ -67,9 +69,12 @@ python fp.py <folder> [--recursive] [--confidence 0.8] [--min-person-height 0.35
 | `--recursive` | `False` | Process subfolders recursively. Without this flag, only images directly inside `folder` are processed. |
 | `--confidence` | `0.8` | Minimum face detection confidence (`0.0`–`1.0`). |
 | `--min-person-height` | `0.35` | Minimum person bounding box height as a ratio of image height (`0.0`–`1.0`). |
+| `--dry-run` | `False` | Show the judgment summary and examples only; nothing is deleted or moved. |
+| `--move-to DIR` | *(none = permanent deletion)* | Move rejected images into `DIR` instead of deleting them, preserving their relative paths (name collisions get `_1`, `_2` suffixes). With `--recursive`, `DIR` must not be inside the target folder. |
+| `--device` | `cpu` | YOLO inference device, e.g. `cpu` or a GPU index like `0` (GPU needs a CUDA-enabled PyTorch). |
 
 > [!WARNING]
-> **Permanent deletion:** Confirmed deletions (`y` or `yes`) permanently remove files from disk (`unlink`) and do **not** send them to the Recycle Bin. Always back up your folder before running.
+> **Permanent deletion:** Confirmed deletions (`y` or `yes`) permanently remove files from disk (`unlink`) and do **not** send them to the Recycle Bin. Always back up your folder before running. We recommend running with `--dry-run` first, or using `--move-to` instead of permanent deletion.
 
 ## Limitations
 
@@ -80,6 +85,15 @@ python fp.py <folder> [--recursive] [--confidence 0.8] [--min-person-height 0.35
 
 - `face_detection_yunet_2026may.onnx` — YuNet from OpenCV Zoo (MIT License; see `YUNET_LICENSE.txt`).
 - `yolov8n.pt` — Ultralytics YOLOv8n (AGPL-3.0).
+
+## Development
+
+Install development dependencies and run the test suite:
+
+```bat
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.venv\Scripts\python.exe -m pytest
+```
 
 ## License
 
@@ -109,20 +123,33 @@ python -m venv .venv
 コマンドラインから実行する場合（`.venv\Scripts\python.exe` でも実行可能）：
 
 ```bat
-python fp.py "画像フォルダのパス" [--recursive] [--confidence 0.8] [--min-person-height 0.35]
+python fp.py "画像フォルダのパス" [--recursive] [--confidence 0.8] [--min-person-height 0.35] [--dry-run] [--move-to DIR] [--device cpu]
 ```
 
 - 通常は選択フォルダ直下の画像だけを処理します。サブフォルダも処理する場合は `--recursive` を指定してください。
 - `--confidence`（既定値 `0.8`）：顔検出の最低信頼度（`0.0`～`1.0`）。
 - `--min-person-height`（既定値 `0.35`）：画像高さに対する人物検出枠の最低割合（`0.0`～`1.0`）。値を上げるほど大きく写った人物だけ残ります。
+- `--dry-run`（既定値オフ）：判定結果の集計と例のみを表示し、ファイルの削除や移動は行いません。
+- `--move-to DIR`（既定値：なし＝完全削除）：対象外画像を削除せず、相対パスを保ったまま `DIR` に移動します（同名ファイルがある場合は `_1`、`_2` の連番を付与）。`--recursive` 指定時、`DIR` は対象フォルダの内部に指定できません。
+- `--device`（既定値 `cpu`）：YOLO の推論デバイス（例：`cpu` や GPU インデックス `0`。GPU を使う場合は CUDA 対応の PyTorch が必要です）。
 
 > [!WARNING]
-> `y` で実行した削除はごみ箱を経由せず**完全に削除**されます。実行前に必ずバックアップを取ってください。
+> `y` で実行した削除はごみ箱を経由せず**完全に削除**されます。実行前に必ずバックアップを取ってください。まずは `--dry-run` で確認するか、完全削除の代わりに `--move-to` を使用することをおすすめします。
 
 ### 判定と制限事項
 
+- 人物検出は顔がちょうど1つ検出された場合にのみ実行されます（高速化のため）。
 - YuNet（顔検出）と YOLOv8n（COCO `person` クラス）の検出結果から推定しており、胸部そのものを直接識別しているわけではありません。誤判定や、小さな人物・大きな遮蔽の見逃しが起こり得ます。
 - 読み込み・推論エラーが発生した画像は削除せず残します。
+
+### 開発
+
+開発用依存関係をインストールしてテストを実行するには、以下を実行します：
+
+```bat
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.venv\Scripts\python.exe -m pytest
+```
 
 ### 同梱モデル・依存関係・ライセンス
 

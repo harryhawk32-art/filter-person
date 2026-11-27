@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
 import tkinter as tk
@@ -54,13 +55,13 @@ def load_person_detector():
     return YOLO(str(PERSON_MODEL_PATH))
 
 
-def detect_people(detector, image: np.ndarray) -> np.ndarray:
+def detect_people(detector, image: np.ndarray, device: str = "cpu") -> np.ndarray:
     results = detector.predict(
         source=image,
         classes=[0],
         conf=PERSON_CONFIDENCE,
         imgsz=640,
-        device="cpu",
+        device=device,
         verbose=False,
     )
     boxes = results[0].boxes
@@ -97,6 +98,42 @@ def person_frame_issue(
     return "人物検出なし"
 
 
+def classify_image(
+    faces: np.ndarray | None,
+    people: np.ndarray,
+    image_shape: tuple[int, ...],
+    min_person_height: float,
+) -> str | None:
+    """顔と人物の検出結果から削除理由を返す。残す場合は None を返す。"""
+    face_count = 0 if faces is None else len(faces)
+    if face_count == 0:
+        return "顔なし"
+    if face_count > 1:
+        return "複数の顔"
+    if len(people) == 0:
+        return "人物検出なし"
+    if len(people) > 1:
+        return "複数人"
+    return person_frame_issue(faces[0], people, image_shape, min_person_height)
+
+
+def move_destination(path: Path, image_dir: Path, move_to: Path) -> Path:
+    """移動先パスを計算し、同名ファイルがあれば連番を付与する。"""
+    rel = path.relative_to(image_dir)
+    dest = move_to / rel
+    if not dest.exists():
+        return dest
+    stem = dest.stem
+    suffix = dest.suffix
+    parent = dest.parent
+    counter = 1
+    while True:
+        candidate = parent / f"{stem}_{counter}{suffix}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="YuNetで顔、YOLOv8nで人物を検出し、顔1人・人物1人・上半身まで写った画像だけを残して、それ以外を削除します（削除前に確認あり）。"
@@ -121,6 +158,21 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_MIN_PERSON_HEIGHT,
         help=f"画像高さに対する人物検出枠の最低割合（既定値: {DEFAULT_MIN_PERSON_HEIGHT}）",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="削除や移動を行わず、判定結果のみ表示する",
+    )
+    parser.add_argument(
+        "--move-to",
+        metavar="DIR",
+        help="削除する代わりに指定フォルダへ移動する",
+    )
+    parser.add_argument(
+        "--device",
+        default="cpu",
+        help="YOLOの推論デバイス（cpu、またはGPU番号 0 など。既定: cpu）",
+    )
     return parser.parse_args()
 
 
@@ -142,6 +194,16 @@ def main() -> int:
     if not image_dir.is_dir():
         print(f"エラー: フォルダが見つかりません: {image_dir}")
         return 2
+
+    move_to_dir: Path | None = None
+    if args.move_to is not None:
+        move_to_dir = Path(args.move_to).expanduser().resolve()
+        if args.recursive and (move_to_dir == image_dir or move_to_dir.is_relative_to(image_dir)):
+            print(
+                f"エラー: --recursive 使用時は、移動先フォルダを処理対象フォルダ内には指定できません: {move_to_dir}"
+            )
+            return 2
+
     for model_path in (MODEL_PATH, PERSON_MODEL_PATH):
         if not model_path.is_file():
             print(f"エラー: 検出モデルが見つかりません: {model_path}")
@@ -188,21 +250,13 @@ def main() -> int:
                 errors.append((path, "画像を読み込めません"))
                 continue
             faces = detect_faces(face_detector, image)
-            people = detect_people(person_detector, image)
             face_count = 0 if faces is None else len(faces)
-            reason = None
-            if face_count == 0:
-                reason = "顔なし"
-            elif face_count > 1:
-                reason = "複数の顔"
-            elif len(people) == 0:
-                reason = "人物検出なし"
-            elif len(people) > 1:
-                reason = "複数人"
-            else:
-                reason = person_frame_issue(
-                    faces[0], people, image.shape, args.min_person_height
-                )
+            people = (
+                detect_people(person_detector, image, args.device)
+                if face_count == 1
+                else np.empty((0, 4), dtype=np.float32)
+            )
+            reason = classify_image(faces, people, image.shape, args.min_person_height)
             if reason is not None:
                 to_delete.append((path, reason))
                 reason_counts[reason] += 1
@@ -233,6 +287,35 @@ def main() -> int:
         print(f"  [{reason}] {path.relative_to(image_dir)}")
     if len(to_delete) > 10:
         print(f"  ...ほか {len(to_delete) - 10} 枚")
+
+    if args.dry_run:
+        print("\nドライラン: 画像は削除・移動していません。")
+        return 0
+
+    if move_to_dir is not None:
+        answer = (
+            input(f"\n削除対象 {len(to_delete)} 枚を {move_to_dir} へ移動します。続行しますか？ (y/N): ")
+            .strip()
+            .lower()
+        )
+        if answer not in {"y", "yes"}:
+            print("キャンセルしました。画像は移動していません。")
+            return 0
+
+        moved = 0
+        for path, reason in to_delete:
+            try:
+                dest = move_destination(path, image_dir, move_to_dir)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(path), str(dest))
+                moved += 1
+                print(f"[移動: {reason}] {path.relative_to(image_dir)}")
+            except OSError as exc:
+                errors.append((path, f"移動できません: {exc}"))
+                print(f"[移動エラー] {path.relative_to(image_dir)}: {exc}")
+
+        print(f"\n完了: {moved} 枚を移動しました。エラー: {len(errors)} 枚")
+        return 0
 
     answer = input(f"\n削除対象 {len(to_delete)} 枚を完全に削除します。続行しますか？ (y/N): ").strip().lower()
     if answer not in {"y", "yes"}:
