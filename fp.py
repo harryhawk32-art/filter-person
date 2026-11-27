@@ -99,7 +99,7 @@ def person_frame_issue(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="YuNetで顔の人数を判定し、顔が0人または2人以上の画像を削除します。"
+        description="YuNetで顔、YOLOv8nで人物を検出し、顔1人・人物1人・上半身まで写った画像だけを残して、それ以外を削除します（削除前に確認あり）。"
     )
     parser.add_argument(
         "folder", nargs="?", help="処理する画像フォルダ（run.batへドラッグ&ドロップ可）"
